@@ -1,0 +1,13 @@
+{
+  "name": "shopshield-return-checker",
+  "version": "1.0.0",
+  "description": "Return policy checker for ShopShield using Playwright",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "playwright": "^1.42.1"
+  }
+}
