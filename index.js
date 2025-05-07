@@ -63,7 +63,11 @@ app.get('/check-return', async (req, res) => {
 
     } catch (error) {
         console.error(error);
-        res.status(500).json({ error: 'Er is een fout opgetreden tijdens het controleren.' });
+        res.status(500).json({ 
+            error: 'Er is een fout opgetreden tijdens het controleren.',
+            details: error.message,
+            stack: error.stack
+        });
     } finally {
         if (browser) await browser.close();
     }
