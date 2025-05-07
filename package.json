@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "description": "Return policy checker for ShopShield using Playwright",
   "main": "index.js",
-  "scripts": {
-    "build": "npm ci",
-    "serve": "node index.js"
-  },
+"scripts": {
+  "build": "npm ci && npx playwright install --with-deps",
+  "serve": "node index.js"
+}
   "dependencies": {
     "express": "^5.1.0",
     "playwright": "^1.52.0"
