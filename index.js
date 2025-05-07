@@ -21,11 +21,23 @@ app.get('/check-return', async (req, res) => {
         const whoisData = await whoisResponse.json();
 
         let domainAge = 'Niet gevonden';
-        if (whoisData.WhoisRecord && whoisData.WhoisRecord.createdDate) {
-            const createdDate = new Date(whoisData.WhoisRecord.createdDate);
-            const age = new Date().getFullYear() - createdDate.getFullYear();
-            domainAge = `${age} jaar oud`;
-        }
+if (whoisData.WhoisRecord && whoisData.WhoisRecord.createdDate) {
+    const createdDate = new Date(whoisData.WhoisRecord.createdDate);
+    const age = new Date().getFullYear() - createdDate.getFullYear();
+    domainAge = `${age} jaar oud`;
+} else if (whoisData.WhoisRecord && whoisData.WhoisRecord.registryData && whoisData.WhoisRecord.registryData.createdDate) {
+    const createdDate = new Date(whoisData.WhoisRecord.registryData.createdDate);
+    const age = new Date().getFullYear() - createdDate.getFullYear();
+    domainAge = `${age} jaar oud (via registryData)`;
+} else if (whoisData.WhoisRecord && whoisData.WhoisRecord.rawText) {
+    const match = whoisData.WhoisRecord.rawText.match(/Creation Date:\s*(\d{4}-\d{2}-\d{2})/i);
+    if (match && match[1]) {
+        const createdDate = new Date(match[1]);
+        const age = new Date().getFullYear() - createdDate.getFullYear();
+        domainAge = `${age} jaar oud (via rawText)`;
+    }
+}
+
 
         // 2️⃣ IP Geolocatie ophalen (serverlocatie)
         let ipAddress = '';
@@ -60,22 +72,25 @@ app.get('/check-return', async (req, res) => {
         const page = await browser.newPage();
         await page.goto(url, { waitUntil: 'networkidle' });
 
-        const retourKeywords = [
-            'retour', 'herroepingsrecht', 'terugsturen', 'retourneren', 'ruilen', 'geld terug', 'bedenktijd',
-            'return', 'withdrawal right', 'send back', 'returning', 'exchange', 'money back', 'cooling-off period'
-        ];
+const retourKeywords = [
+    'retour', 'herroepingsrecht', 'terugsturen', 'retourneren', 'ruilen', 'geld terug', 'bedenktijd',
+    'return', 'withdrawal right', 'send back', 'returning', 'exchange', 'money back', 'cooling-off period',
+    'klantenservice', 'veelgestelde vragen', 'service', 'annuleren', 'levering', 'verzending',
+    'customer service', 'faq', 'help', 'cancel', 'delivery', 'shipping'
+];
+
 
         // Zoek naar retour-link op homepage
-        const retourLink = await page.$$eval('a', links => {
-            const keywords = [
-                'retour', 'herroepingsrecht', 'terugsturen', 'retourneren', 'ruilen', 'geld terug', 'bedenktijd',
-                'return', 'withdrawal right', 'send back', 'returning', 'exchange', 'money back', 'cooling-off period'
-            ];
-            const found = links.find(link =>
-                keywords.some(keyword => link.textContent.toLowerCase().includes(keyword))
-            );
-            return found ? found.href : null;
-        });
+const retourLink = await page.$$eval('a', (links, keywords) => {
+    const found = links.find(link =>
+        keywords.some(keyword =>
+            (link.textContent && link.textContent.toLowerCase().includes(keyword)) ||
+            (link.href && link.href.toLowerCase().includes(keyword))
+        )
+    );
+    return found ? found.href : null;
+}, retourKeywords);
+
 
         let retourResult = 'Geen retourbeleid gevonden.';
         if (retourLink) {
@@ -104,14 +119,44 @@ app.get('/check-return', async (req, res) => {
 
         await browser.close();
 
+        // 🔥 Algemene vertrouwensscore berekenen
+let score = 0;
+
+// +20 als domein ouder is dan 5 jaar
+if (domainAge.includes('jaar')) {
+    const years = parseInt(domainAge.match(/\d+/));
+    if (years >= 5) score += 20;
+}
+
+// +20 als SSL aanwezig
+if (sslPresent.includes('aanwezig')) {
+    score += 20;
+}
+
+// + Domeinreputatie (bijv. 98.9 => ~49)
+const repMatch = reputation.match(/score: (\d+(\.\d+)?)/);
+if (repMatch && repMatch[1]) {
+    score += Math.min((parseFloat(repMatch[1]) * 0.5), 50);
+}
+
+// +10 als retourbeleid gevonden
+if (retourResult.includes('gevonden')) {
+    score += 10;
+}
+
+const advies = score >= 70 ? 'Deze webshop lijkt betrouwbaar.' : 'Wees voorzichtig bij deze webshop.';
+
+
         // ✅ Resultaat teruggeven
-        res.json({
-            domeinleeftijd: domainAge,
-            ssl: sslPresent,
-            serverlocatie: serverLocation,
-            domeinreputatie: reputation,
-            retourbeleid: retourResult
-        });
+res.json({
+    domeinleeftijd: domainAge,
+    ssl: sslPresent,
+    serverlocatie: serverLocation,
+    domeinreputatie: reputation,
+    retourbeleid: retourResult,
+    vertrouwensscore: `${Math.round(score)}/100`,
+    advies: advies
+});
 
     } catch (error) {
         console.error(error);
