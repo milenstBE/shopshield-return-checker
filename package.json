@@ -7,8 +7,9 @@
     "build": "npm ci",
     "serve": "node index.js"
   },
-  "dependencies": {
+"dependencies": {
     "express": "^5.1.0",
-    "playwright": "^1.52.0"
-  }
+    "playwright": "^1.52.0",
+    "node-fetch": "^2.6.9"
+}
 }
