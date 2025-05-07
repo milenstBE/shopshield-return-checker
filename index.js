@@ -13,7 +13,7 @@ app.get('/check-return', async (req, res) => {
 
     let browser;
     try {
-        browser = await chromium.launch();
+        const browser = await chromium.connectOverCDP('wss://chrome.browserless.io?token=SGgChRJHY7Yojqfe24c9dc3481346fa3de4bbbc10b');
         const page = await browser.newPage();
         await page.goto(url, { waitUntil: 'networkidle' });
 
