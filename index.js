@@ -1,6 +1,7 @@
 const express = require('express');
 const { chromium } = require('playwright');
 const fetch = require('node-fetch');
+const dns = require('dns').promises;
 
 const app = express();
 const port = 3000;
@@ -26,10 +27,26 @@ app.get('/check-return', async (req, res) => {
             domainAge = `${age} jaar oud`;
         }
 
-        // 2️⃣ IP Geolocatie ophalen (serverlocatie)
-        const geoResponse = await fetch(`https://ip-geolocation.whoisxmlapi.com/api/v1?apiKey=${WHOIS_API_KEY}&ipAddress=${domain}`);
-        const geoData = await geoResponse.json();
-        const serverLocation = geoData && geoData.location && geoData.location.country ? geoData.location.country : 'Onbekend';
+// 2️⃣ IP Geolocatie ophalen (serverlocatie)
+
+// 🔄 Eerst IP-adres ophalen via DNS
+let ipAddress = '';
+try {
+    const addresses = await dns.lookup(domain);
+    ipAddress = addresses.address;
+    console.log(`Gevonden IP-adres: ${ipAddress}`);
+} catch (e) {
+    console.log('Kon IP-adres niet ophalen:', e.message);
+}
+
+// 🔄 Daarna de locatie ophalen
+let serverLocation = 'Onbekend';
+if (ipAddress) {
+    const geoResponse = await fetch(`https://ip-geolocation.whoisxmlapi.com/api/v1?apiKey=${WHOIS_API_KEY}&ipAddress=${ipAddress}`);
+    const geoData = await geoResponse.json();
+    serverLocation = geoData && geoData.location && geoData.location.country ? geoData.location.country : 'Onbekend';
+}
+
 
         // 3️⃣ Domain reputation ophalen
         const repResponse = await fetch(`https://domain-reputation.whoisxmlapi.com/api/v1?apiKey=${WHOIS_API_KEY}&domainName=${domain}`);
