@@ -7,8 +7,8 @@
     "build": "npm ci && npx playwright install --with-deps",
     "serve": "node index.js"
   },
-  "dependencies": {
-    "express": "^5.1.0",
-    "playwright": "^1.52.0"
-  }
+"dependencies": {
+  "express": "^5.1.0",
+  "playwright-core": "^1.52.0"
+}
 }
