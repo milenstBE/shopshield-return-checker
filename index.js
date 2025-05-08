@@ -2,11 +2,18 @@ const express = require('express');
 const { chromium } = require('playwright');
 const fetch = require('node-fetch');
 const dns = require('dns').promises;
+require('dotenv').config(); 
+const OpenAI = require('openai');  
 
 const app = express();
 const port = 3000;
 const WHOIS_API_KEY = 'at_ACJ5jeTKK0B0yUd7kNRNX12meLzu3';
-const OPENAI_API_KEY = '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';
+
+// ✅ Enkele openai-initialisatie
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY
+});
+
 app.get('/check-return', async (req, res) => {
     const url = req.query.url;
     if (!url) {
@@ -24,11 +31,11 @@ app.get('/check-return', async (req, res) => {
         const whoisResponse = await fetch(`https://www.whoisxmlapi.com/whoisserver/WhoisService?apiKey=${WHOIS_API_KEY}&domainName=${domain}&outputFormat=JSON`);
         const whoisData = await whoisResponse.json();
         let domainAge = 'Niet gevonden';
-        if (whoisData.WhoisRecord && whoisData.WhoisRecord.createdDate) {
+        if (whoisData.WhoisRecord?.createdDate) {
             const createdDate = new Date(whoisData.WhoisRecord.createdDate);
             const age = new Date().getFullYear() - createdDate.getFullYear();
             domainAge = `${age} jaar oud`;
-        } else if (whoisData.WhoisRecord && whoisData.WhoisRecord.registryData && whoisData.WhoisRecord.registryData.createdDate) {
+        } else if (whoisData.WhoisRecord?.registryData?.createdDate) {
             const createdDate = new Date(whoisData.WhoisRecord.registryData.createdDate);
             const age = new Date().getFullYear() - createdDate.getFullYear();
             domainAge = `${age} jaar oud (via registryData)`;
@@ -67,29 +74,22 @@ app.get('/check-return', async (req, res) => {
             }).filter(r => r.title && r.link);
         });
 
-        // 🔥 AI-advies genereren
+        // 🔥 AI-advies genereren via openai lib
         let aiAdvice = 'Niet beschikbaar.';
         if (results.length > 0) {
             const reviewSummary = results.map((r, i) => `${i + 1}. ${r.title} - ${r.snippet}`).join('\n');
 
-            const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${OPENAI_API_KEY}`
-                },
-                body: JSON.stringify({
-                    model: 'gpt-3.5-turbo',
-                    messages: [
-                        { role: 'system', content: 'Je bent een expert in het analyseren van webwinkel-reviews.' },
-                        { role: 'user', content: `Hier zijn zoekresultaten over ${domain}. Geef een korte samenvatting van de algemene klanttevredenheid en een advies:\n\n${reviewSummary}` }
-                    ],
-                    max_tokens: 300,
-                    temperature: 0.5
-                })
+            const aiResponse = await openai.chat.completions.create({
+                model: 'gpt-3.5-turbo',
+                messages: [
+                    { role: 'system', content: 'Je bent een expert in het analyseren van webwinkel-reviews.' },
+                    { role: 'user', content: `Hier zijn zoekresultaten over ${domain}. Geef een korte samenvatting van de algemene klanttevredenheid en een advies:\n\n${reviewSummary}` }
+                ],
+                max_tokens: 300,
+                temperature: 0.5
             });
-            const aiData = await openaiResponse.json();
-            aiAdvice = aiData.choices?.[0]?.message?.content?.trim() || 'Geen advies beschikbaar.';
+
+            aiAdvice = aiResponse.choices?.[0]?.message?.content?.trim() || 'Geen advies beschikbaar.';
         }
 
         // ✅ Score berekenen
