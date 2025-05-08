@@ -6,8 +6,7 @@ const dns = require('dns').promises;
 const app = express();
 const port = 3000;
 const WHOIS_API_KEY = 'at_ACJ5jeTKK0B0yUd7kNRNX12meLzu3';
-const OPENAI_API_KEY = 'jouw-openai-api-key-hier'; // 👈 Vervang dit met jouw echte key
-
+const OPENAI_API_KEY = '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';
 app.get('/check-return', async (req, res) => {
     const url = req.query.url;
     if (!url) {
