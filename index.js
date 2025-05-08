@@ -6,6 +6,7 @@ const dns = require('dns').promises;
 const app = express();
 const port = 3000;
 const WHOIS_API_KEY = 'at_ACJ5jeTKK0B0yUd7kNRNX12meLzu3';
+const OPENAI_API_KEY = 'jouw-openai-api-key-hier'; // 👈 Vervang dit met jouw echte key
 
 app.get('/check-return', async (req, res) => {
     const url = req.query.url;
@@ -14,12 +15,15 @@ app.get('/check-return', async (req, res) => {
     }
 
     let domain = new URL(url).hostname.replace('www.', '');
+    let browser;
 
     try {
-        // 1️⃣ WHOIS: Domeinleeftijd ophalen
+        browser = await chromium.connectOverCDP('wss://chrome.browserless.io?token=SGgChRJHY7Yojqfe24c9dc3481346fa3de4bbbc10b');
+        const page = await browser.newPage();
+
+        // 🔎 WHOIS
         const whoisResponse = await fetch(`https://www.whoisxmlapi.com/whoisserver/WhoisService?apiKey=${WHOIS_API_KEY}&domainName=${domain}&outputFormat=JSON`);
         const whoisData = await whoisResponse.json();
-
         let domainAge = 'Niet gevonden';
         if (whoisData.WhoisRecord && whoisData.WhoisRecord.createdDate) {
             const createdDate = new Date(whoisData.WhoisRecord.createdDate);
@@ -31,154 +35,95 @@ app.get('/check-return', async (req, res) => {
             domainAge = `${age} jaar oud (via registryData)`;
         }
 
-        // 2️⃣ IP Geolocatie ophalen (serverlocatie)
-        let ipAddress = '';
+        // 🔎 IP + Serverlocatie
+        let serverLocation = 'Onbekend';
         try {
             const addresses = await dns.lookup(domain);
-            ipAddress = addresses.address;
-        } catch (e) {
-            console.log('Kon IP-adres niet ophalen:', e.message);
-        }
-
-        let serverLocation = 'Onbekend';
-        if (ipAddress) {
-            const geoResponse = await fetch(`https://ip-geolocation.whoisxmlapi.com/api/v1?apiKey=${WHOIS_API_KEY}&ipAddress=${ipAddress}`);
+            const geoResponse = await fetch(`https://ip-geolocation.whoisxmlapi.com/api/v1?apiKey=${WHOIS_API_KEY}&ipAddress=${addresses.address}`);
             const geoData = await geoResponse.json();
-            serverLocation = geoData && geoData.location && geoData.location.country ? geoData.location.country : 'Onbekend';
-        }
+            serverLocation = geoData?.location?.country || 'Onbekend';
+        } catch (e) { console.log('Geo error:', e.message); }
 
-        // 3️⃣ Domain reputation ophalen
+        // 🔎 Domeinreputatie
         const repResponse = await fetch(`https://domain-reputation.whoisxmlapi.com/api/v1?apiKey=${WHOIS_API_KEY}&domainName=${domain}`);
         const repData = await repResponse.json();
         let reputation = 'Onbekend';
-        if (repData && repData.reputationScore !== undefined) {
+        if (repData?.reputationScore !== undefined) {
             reputation = `Veilig (score: ${repData.reputationScore})`;
         }
 
-        // 4️⃣ SSL-certificaat checken
+        // 🔒 SSL
         const sslPresent = url.startsWith('https://') ? 'SSL-certificaat aanwezig' : 'Geen SSL-certificaat';
 
-        // 5️⃣ Retourbeleid + Reviews scraping
-        const browser = await chromium.connectOverCDP('wss://chrome.browserless.io?token=SGgChRJHY7Yojqfe24c9dc3481346fa3de4bbbc10b');
-        const page = await browser.newPage();
-        await page.goto(url, { waitUntil: 'networkidle' });
+        // 🕵️ Google scraping (eerste 2 pagina’s)
+        const searchUrl = `https://www.google.com/search?q=${domain}+reviews&num=20`;
+        await page.goto(searchUrl, { waitUntil: 'networkidle' });
 
-        const retourKeywords = [
-            'retour', 'herroepingsrecht', 'terugsturen', 'retourneren', 'ruilen', 'geld terug', 'bedenktijd',
-            'return', 'withdrawal right', 'send back', 'returning', 'exchange', 'money back', 'cooling-off period',
-            'klantenservice', 'veelgestelde vragen', 'service', 'annuleren', 'levering', 'verzending',
-            'customer service', 'faq', 'help', 'cancel', 'delivery', 'shipping'
-        ];
+        const results = await page.$$eval('div.g', nodes => {
+            return nodes.map(node => {
+                const title = node.querySelector('h3')?.innerText || '';
+                const link = node.querySelector('a')?.href || '';
+                const snippet = node.querySelector('.VwiC3b')?.innerText || '';
+                return { title, link, snippet };
+            }).filter(r => r.title && r.link);
+        });
 
-        // Zoek naar retour-link op homepage
-        const retourLink = await page.$$eval('a', (links, keywords) => {
-            const found = links.find(link =>
-                keywords.some(keyword =>
-                    (link.textContent && link.textContent.toLowerCase().includes(keyword)) ||
-                    (link.href && link.href.toLowerCase().includes(keyword))
-                )
-            );
-            return found ? found.href : null;
-        }, retourKeywords);
+        // 🔥 AI-advies genereren
+        let aiAdvice = 'Niet beschikbaar.';
+        if (results.length > 0) {
+            const reviewSummary = results.map((r, i) => `${i + 1}. ${r.title} - ${r.snippet}`).join('\n');
 
-        let retourResult = 'Geen retourbeleid gevonden.';
-        if (retourLink) {
-            try {
-                const retourPage = await browser.newPage();
-                await retourPage.goto(retourLink, { waitUntil: 'networkidle' });
-                const retourContent = await retourPage.content();
-                if (retourKeywords.some(kw => retourContent.toLowerCase().includes(kw))) {
-                    retourResult = 'Retourbeleid gevonden op retourpagina.';
-                } else {
-                    retourResult = 'Retourpagina gevonden, maar geen duidelijk retourbeleid.';
-                }
-                await retourPage.close();
-            } catch (e) {
-                retourResult = 'Retourpagina gevonden, maar kon niet worden gelezen.';
-            }
-        } else {
-            const content = await page.content();
-            if (retourKeywords.some(kw => content.toLowerCase().includes(kw))) {
-                retourResult = 'Retourbeleid gevonden op homepage.';
-            }
+            const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${OPENAI_API_KEY}`
+                },
+                body: JSON.stringify({
+                    model: 'gpt-3.5-turbo',
+                    messages: [
+                        { role: 'system', content: 'Je bent een expert in het analyseren van webwinkel-reviews.' },
+                        { role: 'user', content: `Hier zijn zoekresultaten over ${domain}. Geef een korte samenvatting van de algemene klanttevredenheid en een advies:\n\n${reviewSummary}` }
+                    ],
+                    max_tokens: 300,
+                    temperature: 0.5
+                })
+            });
+            const aiData = await openaiResponse.json();
+            aiAdvice = aiData.choices?.[0]?.message?.content?.trim() || 'Geen advies beschikbaar.';
         }
 
-        // 🔥 Reviews verzamelen
-        const reviews = {
-            trustpilot: 'Geen info beschikbaar.',
-            sitejabber: 'Geen info beschikbaar.',
-            google: 'Controleer handmatig (Google Maps)',
-            yelp: 'Geen data gevonden.',
-            facebook: 'Geen data gevonden.'
-        };
-
-        // Trustpilot scraping
-        try {
-            const trustPage = await browser.newPage();
-            await trustPage.goto(`https://www.trustpilot.com/review/${domain}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
-            const trustContent = await trustPage.content();
-            const trustScore = await trustPage.$eval('[data-business-unit-summary-rating] [data-rating]', el => el.getAttribute('data-rating')).catch(() => null);
-            const trustReviews = await trustPage.$eval('[data-business-unit-summary-rating] .typography_body-l__KUYFJ', el => el.textContent).catch(() => null);
-            if (trustScore && trustReviews) {
-                reviews.trustpilot = `${trustScore}/5 ⭐ (${trustReviews.trim()})`;
-            } else {
-                reviews.trustpilot = 'Geen reviews gevonden.';
-            }
-            await trustPage.close();
-        } catch (e) {
-            reviews.trustpilot = 'Trustpilot niet bereikbaar.';
-        }
-
-        // Sitejabber scraping
-        try {
-            const sjPage = await browser.newPage();
-            await sjPage.goto(`https://www.sitejabber.com/reviews/${domain}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
-            const sjScore = await sjPage.$eval('.average-rating', el => el.textContent).catch(() => null);
-            const sjCount = await sjPage.$eval('.rating-amount', el => el.textContent).catch(() => null);
-            if (sjScore && sjCount) {
-                reviews.sitejabber = `${sjScore.trim()} ⭐ (${sjCount.trim()})`;
-            } else {
-                reviews.sitejabber = 'Geen reviews gevonden.';
-            }
-            await sjPage.close();
-        } catch (e) {
-            reviews.sitejabber = 'Sitejabber niet bereikbaar.';
-        }
-
-        await browser.close();
-
-        // 🔥 Algemene vertrouwensscore berekenen
+        // ✅ Score berekenen
         let score = 0;
         if (domainAge.includes('jaar')) {
             const years = parseInt(domainAge.match(/\d+/));
             if (years >= 5) score += 20;
         }
-        if (sslPresent.includes('aanwezig')) {
-            score += 20;
-        }
+        if (sslPresent.includes('aanwezig')) score += 20;
         const repMatch = reputation.match(/score: (\d+(\.\d+)?)/);
-        if (repMatch && repMatch[1]) {
+        if (repMatch?.[1]) {
             score += Math.min((parseFloat(repMatch[1]) * 0.5), 50);
         }
-        if (retourResult.includes('gevonden')) {
-            score += 10;
-        }
+
         const advies = score >= 70 ? 'Deze webshop lijkt betrouwbaar.' : 'Wees voorzichtig bij deze webshop.';
 
-        // ✅ Resultaat teruggeven
+        await browser.close();
+
+        // ✅ Teruggeven
         res.json({
             domeinleeftijd: domainAge,
             ssl: sslPresent,
             serverlocatie: serverLocation,
             domeinreputatie: reputation,
-            retourbeleid: retourResult,
             vertrouwensscore: `${Math.round(score)}/100`,
             advies: advies,
-            reviews: reviews
+            reviewBronnen: results,
+            aiAdvies: aiAdvice
         });
 
     } catch (error) {
         console.error(error);
+        if (browser) await browser.close();
         res.status(500).json({
             error: 'Er is een fout opgetreden tijdens het controleren.',
             details: error.message,
