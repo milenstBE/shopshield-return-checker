@@ -3,13 +3,12 @@ const { chromium } = require('playwright');
 const fetch = require('node-fetch');
 const dns = require('dns').promises;
 require('dotenv').config(); 
-const OpenAI = require('openai');  
+const OpenAI = require('openai');
 
 const app = express();
 const port = 3000;
 const WHOIS_API_KEY = 'at_ACJ5jeTKK0B0yUd7kNRNX12meLzu3';
 
-// ✅ Enkele openai-initialisatie
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
 });
@@ -27,7 +26,7 @@ app.get('/check-return', async (req, res) => {
         browser = await chromium.connectOverCDP('wss://chrome.browserless.io?token=SGgChRJHY7Yojqfe24c9dc3481346fa3de4bbbc10b');
         const page = await browser.newPage();
 
-        // 🔎 WHOIS
+        // 1️⃣ WHOIS
         const whoisResponse = await fetch(`https://www.whoisxmlapi.com/whoisserver/WhoisService?apiKey=${WHOIS_API_KEY}&domainName=${domain}&outputFormat=JSON`);
         const whoisData = await whoisResponse.json();
         let domainAge = 'Niet gevonden';
@@ -41,7 +40,7 @@ app.get('/check-return', async (req, res) => {
             domainAge = `${age} jaar oud (via registryData)`;
         }
 
-        // 🔎 IP + Serverlocatie
+        // 2️⃣ IP + Serverlocatie
         let serverLocation = 'Onbekend';
         try {
             const addresses = await dns.lookup(domain);
@@ -50,7 +49,7 @@ app.get('/check-return', async (req, res) => {
             serverLocation = geoData?.location?.country || 'Onbekend';
         } catch (e) { console.log('Geo error:', e.message); }
 
-        // 🔎 Domeinreputatie
+        // 3️⃣ Domeinreputatie
         const repResponse = await fetch(`https://domain-reputation.whoisxmlapi.com/api/v1?apiKey=${WHOIS_API_KEY}&domainName=${domain}`);
         const repData = await repResponse.json();
         let reputation = 'Onbekend';
@@ -58,23 +57,23 @@ app.get('/check-return', async (req, res) => {
             reputation = `Veilig (score: ${repData.reputationScore})`;
         }
 
-        // 🔒 SSL
+        // 4️⃣ SSL
         const sslPresent = url.startsWith('https://') ? 'SSL-certificaat aanwezig' : 'Geen SSL-certificaat';
 
-        // 🕵️ Google scraping (eerste 2 pagina’s)
-        const searchUrl = `https://www.google.com/search?q=${domain}+reviews&num=20`;
+        // 5️⃣ BING scraping (eerste 2 pagina’s)
+        const searchUrl = `https://www.bing.com/search?q=${domain}+reviews&count=20`;
         await page.goto(searchUrl, { waitUntil: 'networkidle' });
 
-        const results = await page.$$eval('div.g', nodes => {
+        const results = await page.$$eval('li.b_algo', nodes => {
             return nodes.map(node => {
-                const title = node.querySelector('h3')?.innerText || '';
+                const title = node.querySelector('h2')?.innerText || '';
                 const link = node.querySelector('a')?.href || '';
-                const snippet = node.querySelector('.VwiC3b')?.innerText || '';
+                const snippet = node.querySelector('.b_caption p')?.innerText || '';
                 return { title, link, snippet };
             }).filter(r => r.title && r.link);
         });
 
-        // 🔥 AI-advies genereren via openai lib
+        // 🔥 AI-advies genereren
         let aiAdvice = 'Niet beschikbaar.';
         if (results.length > 0) {
             const reviewSummary = results.map((r, i) => `${i + 1}. ${r.title} - ${r.snippet}`).join('\n');
@@ -92,7 +91,7 @@ app.get('/check-return', async (req, res) => {
             aiAdvice = aiResponse.choices?.[0]?.message?.content?.trim() || 'Geen advies beschikbaar.';
         }
 
-        // ✅ Score berekenen
+        // ✅ Vertrouwensscore berekenen
         let score = 0;
         if (domainAge.includes('jaar')) {
             const years = parseInt(domainAge.match(/\d+/));
@@ -108,7 +107,7 @@ app.get('/check-return', async (req, res) => {
 
         await browser.close();
 
-        // ✅ Teruggeven
+        // ✅ Resultaat teruggeven
         res.json({
             domeinleeftijd: domainAge,
             ssl: sslPresent,
