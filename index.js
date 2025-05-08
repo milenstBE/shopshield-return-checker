@@ -2,13 +2,13 @@ const express = require('express');
 const { chromium } = require('playwright');
 const fetch = require('node-fetch');
 const dns = require('dns').promises;
-require('dotenv').config(); 
 const OpenAI = require('openai');
 
 const app = express();
 const port = 3000;
 const WHOIS_API_KEY = 'at_ACJ5jeTKK0B0yUd7kNRNX12meLzu3';
 
+// ✅ OpenAI config (gebruik enkel process.env)
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY
 });
@@ -60,7 +60,7 @@ app.get('/check-return', async (req, res) => {
         // 4️⃣ SSL
         const sslPresent = url.startsWith('https://') ? 'SSL-certificaat aanwezig' : 'Geen SSL-certificaat';
 
-        // 5️⃣ BING scraping (eerste 2 pagina’s)
+        // 5️⃣ BING scraping
         const searchUrl = `https://www.bing.com/search?q=${domain}+reviews&count=20`;
         await page.goto(searchUrl, { waitUntil: 'networkidle' });
 
