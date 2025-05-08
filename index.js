@@ -64,7 +64,7 @@ app.get('/check-return', async (req, res) => {
         const searchUrl = `https://www.bing.com/search?q=${domain}+reviews+site:trustpilot.com+OR+site:sitejabber.com+OR+site:kiyoh.com&count=15`;
         await page.goto(searchUrl, { waitUntil: 'networkidle' });
 
-        const results = await page.$$eval('li.b_algo', nodes => {
+        const reviews = await page.$$eval('li.b_algo', nodes => {
             return nodes.slice(0, 8).map(node => {
                 const title = node.querySelector('h2')?.innerText || '';
                 const link = node.querySelector('a')?.href || '';
@@ -73,14 +73,39 @@ app.get('/check-return', async (req, res) => {
             }).filter(r => r.title && r.link);
         });
 
-        // 🔥 AI-analyse
-        let aiAdvice = 'Niet beschikbaar.';
+        // Simpele retourbeleid check (nieuwe extra zoekopdracht)
+        let retourbeleid = 'Niet gevonden';
+        try {
+            const retourUrl = `https://www.bing.com/search?q=${domain}+retourbeleid+site:${domain}`;
+            await page.goto(retourUrl, { waitUntil: 'networkidle' });
+            const retourText = await page.$eval('.b_caption p', el => el.innerText);
+            if (retourText) {
+                retourbeleid = retourText.slice(0, 300) + '...';
+            }
+        } catch (e) { console.log('Geen retourbeleid gevonden.'); }
+
+        // Extra: keurmerken en contactinfo proberen afleiden van homepage
+        let keurmerken = 'Niet gevonden';
+        let contactInfo = 'Niet gevonden';
+        try {
+            await page.goto(`https://${domain}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+            const bodyText = await page.evaluate(() => document.body.innerText);
+            if (bodyText.match(/keurmerk|veilig shoppen|thuiswinkel/i)) {
+                keurmerken = 'Keurmerk of Veilig Shoppen-label gevonden.';
+            }
+            if (bodyText.match(/contact|over ons|klantenservice/i)) {
+                contactInfo = 'Contactpagina aanwezig.';
+            }
+        } catch (e) { console.log('Keurmerk/contact scan niet gelukt.'); }
+
+        // AI-analyse
+        let analyse = 'Niet beschikbaar.';
         let gemiddeldeScore = 'Niet beschikbaar';
         let aantalReviews = 'Niet beschikbaar';
         let trend = 'Geen trends gevonden';
 
-        if (results.length > 0) {
-            const reviewSummary = results.map((r, i) => `${i + 1}. ${r.title} - ${r.snippet}`).join('\n');
+        if (reviews.length > 0) {
+            const reviewSummary = reviews.map((r, i) => `${i + 1}. ${r.title} - ${r.snippet}`).join('\n');
 
             const aiResponse = await openai.chat.completions.create({
                 model: 'gpt-3.5-turbo',
@@ -92,17 +117,17 @@ app.get('/check-return', async (req, res) => {
                 temperature: 0.5
             });
 
-            const content = aiResponse.choices?.[0]?.message?.content?.trim() || 'Geen advies beschikbaar.';
-            aiAdvice = content;
+            const content = aiResponse.choices?.[0]?.message?.content?.trim() || 'Geen analyse beschikbaar.';
+            analyse = content;
 
-            // Extra: simpele extractie van cijfers (optioneel verbeteren later)
-            const scoreMatch = content.match(/(\d(\.\d)?\/5\s*sterren)/i);
+            // Extractie verbeterd
+            const scoreMatch = content.match(/(?:gemiddelde|overall).*?(\d(\.\d)?\/5)/i);
             if (scoreMatch) gemiddeldeScore = scoreMatch[1];
 
-            const reviewsMatch = content.match(/(ca\.?\s*\d+[\.\d]*\s*reviews|ongeveer\s*\d+[\.\d]*\s*reviews)/i);
+            const reviewsMatch = content.match(/(ongeveer|ca\.?)\s*\d{2,6}/i);
             if (reviewsMatch) aantalReviews = reviewsMatch[0];
 
-            const trendMatch = content.match(/(trends|laatste maanden|recent(e)?\s*(klachten|positieve))/i);
+            const trendMatch = content.match(/(trend:|trends:|de laatste tijd|recent.*(positief|negatief|klachten))/i);
             if (trendMatch) trend = trendMatch[0];
         }
 
@@ -123,19 +148,20 @@ app.get('/check-return', async (req, res) => {
 
         // ✅ Teruggeven
         res.json({
+            advies,
+            vertrouwensscore: `${Math.round(score)}/100`,
+            gemiddeldeScore,
+            aantalReviews,
+            trend,
+            keurmerken,
+            contactInfo,
             domeinleeftijd: domainAge,
             ssl: sslPresent,
             serverlocatie: serverLocation,
             domeinreputatie: reputation,
-            vertrouwensscore: `${Math.round(score)}/100`,
-            advies: advies,
-            gemiddeldeScore: gemiddeldeScore,
-            aantalReviews: aantalReviews,
-            trend: trend,
-            keurmerken: 'Nog niet gecontroleerd.',
-            contactInfo: 'Niet gevonden (scraping kan later uitgebreid worden).',
-            reviewBronnen: results,
-            analyse: aiAdvice
+            retourbeleid,
+            reviewBronnen: reviews,
+            analyse
         });
 
     } catch (error) {
